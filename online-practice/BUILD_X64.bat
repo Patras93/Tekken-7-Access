@@ -9,7 +9,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-cl /nologo /std:c++17 /EHsc /O2 /W4 T7OnlinePracticeProbe.cpp /link bcrypt.lib /out:T7OnlinePracticeProbe.exe
+cl /nologo /std:c++17 /EHsc /O2 /W4 T7OnlinePracticeProbe.cpp /link bcrypt.lib user32.lib /out:T7OnlinePracticeProbe.exe
 if errorlevel 1 (
   echo.
   echo BUILD FAILED
