@@ -1,0 +1,58 @@
+name: Tekken 7 Access - automatyczny Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'release-packages/TekkenAccessibility-*.zip'
+  workflow_dispatch:
+    inputs:
+      package_path:
+        description: 'Ścieżka istniejącego ZIP w repozytorium'
+        required: true
+        default: 'release-packages/TekkenAccessibility-3.20.30-PL1.zip'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tekken7-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobierz repozytorium
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sprawdź paczkę, DLL, tłumaczenie i opis wydania
+        id: verify
+        env:
+          TRIGGER_EVENT: ${{ github.event_name }}
+          REQUESTED_PATH: ${{ github.event.inputs.package_path }}
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: python3 .github/scripts/verify_release.py
+
+      - name: Utwórz Release z ZIP-em (bez nadpisywania poprzednich)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.verify.outputs.release_tag }}
+          PACKAGE_PATH: ${{ steps.verify.outputs.package_path }}
+          NOTES_PATH: ${{ steps.verify.outputs.notes_path }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Wydanie $RELEASE_TAG już istnieje. Nie nadpisuję istniejącego ZIP-a."
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" "$PACKAGE_PATH" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Tekken Accessibility $RELEASE_TAG (TEST)" \
+            --notes-file "$NOTES_PATH" \
+            --prerelease
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json url --jq '.url'
