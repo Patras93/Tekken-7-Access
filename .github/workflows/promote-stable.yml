@@ -1,0 +1,123 @@
+name: Tekken 7 Access - oznacz wydanie jako stabilne
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'release-status/*.stable.json'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Tag istniejącego wydania, np. 3.20.30-PL1'
+        required: true
+        default: '3.20.30-PL1'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tekken7-promote-stable
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobierz repozytorium
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sprawdź zatwierdzenie w grze i identyczność ZIP
+        id: check
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_TAG: ${{ github.event.inputs.release_tag }}
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+          def die(msg):
+              raise SystemExit("BŁĄD: " + msg)
+
+          if os.environ["EVENT_NAME"] == "workflow_dispatch":
+              tag = os.environ.get("REQUESTED_TAG", "")
+          else:
+              before = os.environ.get("BEFORE_SHA", "")
+              after = os.environ.get("CURRENT_SHA", "")
+              if not re.fullmatch(r"[a-f0-9]{40}", after):
+                  die("Nieznany SHA commita.")
+              if before == "0"*40:
+                  args = ["git", "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", after, "--", "release-status/"]
+              elif re.fullmatch(r"[a-f0-9]{40}", before):
+                  args = ["git", "diff", "--diff-filter=A", "--name-only", before, after, "--", "release-status/"]
+              else:
+                  die("Nieznany SHA poprzedniego commita.")
+              changed = subprocess.check_output(args, text=True).splitlines()
+              approved = [p for p in changed if re.fullmatch(r"release-status/\d+\.\d+\.\d+-PL\d+\.stable\.json", p)]
+              if len(approved) != 1:
+                  die(f"Wymagany dokładnie jeden nowy plik zatwierdzenia, jest {approved!r}")
+              tag = Path(approved[0]).name.removesuffix(".stable.json")
+
+          if not re.fullmatch(r"\d+\.\d+\.\d+-PL\d+", tag):
+              die("Nieprawidłowy tag.")
+          marker = Path("release-status") / (tag + ".stable.json")
+          if not marker.is_file():
+              die("Brak pliku zatwierdzenia.")
+          data = json.loads(marker.read_text("utf-8"))
+          if data.get("tag") != tag or data.get("verified_in_game") is not True or data.get("approval") != "owner-confirmed":
+              die("Brak wyraźnego potwierdzenia poprawnego działania w grze.")
+          expected = data.get("zip_sha256", "")
+          if not re.fullmatch(r"[a-f0-9]{64}", expected):
+              die("Brak SHA256 zatwierdzonej paczki.")
+          path = Path("release-packages") / ("TekkenAccessibility-" + tag + ".zip")
+          if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+              die("ZIP w repozytorium jest inny niż zatwierdzony w grze.")
+          notes = Path("release-notes") / (tag + ".md")
+          if not notes.is_file() or not notes.read_text("utf-8").strip():
+              die("Brak opisu stabilnego wydania.")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"tag={tag}\nnotes={notes}\nsha256={expected}\n")
+          print("PASS: potwierdzono wersję, test użytkownika i niezmieniony ZIP.")
+          PY
+
+      - name: Zamień istniejący Release TEST na stabilny
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.check.outputs.tag }}
+          NOTES_PATH: ${{ steps.check.outputs.notes }}
+          EXPECTED_SHA256: ${{ steps.check.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release-before.json"
+          python3 - <<'PY'
+          import json, os
+          release=json.load(open(os.path.join(os.environ["RUNNER_TEMP"],"release-before.json"),encoding="utf-8"))
+          tag=os.environ["RELEASE_TAG"]
+          assets=[a for a in release.get("assets",[]) if a.get("name")==f"TekkenAccessibility-{tag}.zip"]
+          if len(assets)!=1 or assets[0].get("digest")!="sha256:"+os.environ["EXPECTED_SHA256"]:
+              raise SystemExit("BŁĄD: asset GitHub Release nie zgadza się z zatwierdzonym ZIP.")
+          if release.get("draft"):
+              raise SystemExit("BŁĄD: wydanie jest szkicem.")
+          print("PASS: istniejący asset ZIP na GitHubie ma oczekiwane SHA256.")
+          PY
+          release_id="$(jq -r '.id' "$RUNNER_TEMP/release-before.json")"
+          jq -n \
+            --arg title "Tekken Accessibility $RELEASE_TAG" \
+            --rawfile body "$NOTES_PATH" \
+            '{name:$title, body:$body, prerelease:false, make_latest:"true"}' \
+            | gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" --input - >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release-after.json"
+          jq -e '.prerelease == false and .draft == false and (.name | endswith("(TEST)") | not)' "$RUNNER_TEMP/release-after.json" >/dev/null
+          echo "SUKCES: wydanie $RELEASE_TAG jest stabilne."
+          jq -r '.html_url' "$RUNNER_TEMP/release-after.json"
