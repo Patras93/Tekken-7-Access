@@ -1,0 +1,8 @@
+{
+  "tag": "3.20.30-PL1",
+  "approval": "owner-confirmed",
+  "verified_in_game": true,
+  "verified_on": "2026-11-02",
+  "verification_scope": "Autor potwierdził działanie polskich komunikatów w Tekken 7 z NVDA, w tym Search Session / Wyszukaj sesję; nie jest to pełny audyt wszystkich trybów.",
+  "zip_sha256": "4929b0c7fc8acbaa020d883048df7cd604160b128af456e68558ce8834cef3fa"
+}
