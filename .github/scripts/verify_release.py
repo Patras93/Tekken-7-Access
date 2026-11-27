@@ -92,12 +92,20 @@ def validate():
                     fail(f"W DLL brakuje poprawki PL1: {phrase}")
     sha256 = hashlib.sha256(package.read_bytes()).hexdigest()
     prerelease = True
-    approval = ROOT / "release-status" / (tag + ".verified.json")
-    if approval.is_file():
-        verified = json.loads(approval.read_text("utf-8-sig"))
-        if (verified.get("tag") != tag or verified.get("verified_in_game") is not True
-                or verified.get("approval") != "owner-confirmed"
-                or verified.get("zip_sha256") != sha256):
+    status = ROOT / "release-status"
+    verified = status / (tag + ".verified.json")
+    approved = status / (tag + ".approved.json")
+    if verified.is_file() and approved.is_file():
+        fail("Dwie sprzeczne deklaracje statusu wydania.")
+    for marker, approval, verified_in_game in (
+        (verified, "owner-confirmed", True),
+        (approved, "owner-requested-stable", False),
+    ):
+        if not marker.is_file():
+            continue
+        data = json.loads(marker.read_text("utf-8-sig"))
+        if (data.get("tag") != tag or data.get("verified_in_game") is not verified_in_game
+                or data.get("approval") != approval or data.get("zip_sha256") != sha256):
             fail("Zatwierdzenie stabilnego wydania nie pasuje do wersji i SHA256 ZIP.")
         prerelease = False
     release_title = f"Tekken Accessibility {tag}" + (" (TEST)" if prerelease else "")
@@ -112,5 +120,5 @@ def validate():
 if __name__ == "__main__":
     try:
         validate()
-    except (OSError, zipfile.BadZipFile, subprocess.CalledProcessError, UnicodeError) as exc:
+    except (OSError, zipfile.BadZipFile, subprocess.CalledProcessError, UnicodeError, json.JSONDecodeError) as exc:
         fail(str(exc))
