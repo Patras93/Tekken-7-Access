@@ -43,16 +43,20 @@ jobs:
           RELEASE_TAG: ${{ steps.verify.outputs.release_tag }}
           PACKAGE_PATH: ${{ steps.verify.outputs.package_path }}
           NOTES_PATH: ${{ steps.verify.outputs.notes_path }}
+          RELEASE_PRERELEASE: ${{ steps.verify.outputs.prerelease }}
+          RELEASE_TITLE: ${{ steps.verify.outputs.release_title }}
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Wydanie $RELEASE_TAG już istnieje. Nie nadpisuję istniejącego ZIP-a."
             exit 1
           fi
+          flags=(--prerelease)
+          if [ "$RELEASE_PRERELEASE" = "false" ]; then flags=(--latest); fi
           gh release create "$RELEASE_TAG" "$PACKAGE_PATH" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "Tekken Accessibility $RELEASE_TAG (TEST)" \
+            --title "$RELEASE_TITLE" \
             --notes-file "$NOTES_PATH" \
-            --prerelease
+            "${flags[@]}"
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json url --jq '.url'

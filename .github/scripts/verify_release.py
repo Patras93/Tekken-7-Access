@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validate a TEKKEN 7 Access prerelease ZIP before publishing it."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -9,7 +10,7 @@ import sys
 import zipfile
 
 ROOT = Path.cwd().resolve()
-PACKAGE_NAME = re.compile(r"TekkenAccessibility-(\d+\.\d+\.\d+-PL\d+)\.zip\Z")
+PACKAGE_NAME = re.compile(r"TekkenAccessibility-(\d+\.\d+\.\d+(?:-PL\d+)?)\.zip\Z")
 
 
 def fail(reason):
@@ -43,7 +44,7 @@ def validate():
         fail("Paczka musi być bezpośrednio w release-packages/.")
     match = PACKAGE_NAME.fullmatch(Path(rel).name)
     if not match:
-        fail("Wymagana nazwa: TekkenAccessibility-X.Y.Z-PLn.zip")
+        fail("Wymagana nazwa: TekkenAccessibility-X.Y.Z.zip lub TekkenAccessibility-X.Y.Z-PLn.zip")
     tag = match.group(1)
     base = tag.split("-PL", 1)[0]
     package = (ROOT / rel).resolve()
@@ -90,12 +91,22 @@ def validate():
                 if phrase.encode("utf-16le") not in dll:
                     fail(f"W DLL brakuje poprawki PL1: {phrase}")
     sha256 = hashlib.sha256(package.read_bytes()).hexdigest()
+    prerelease = True
+    approval = ROOT / "release-status" / (tag + ".verified.json")
+    if approval.is_file():
+        verified = json.loads(approval.read_text("utf-8-sig"))
+        if (verified.get("tag") != tag or verified.get("verified_in_game") is not True
+                or verified.get("approval") != "owner-confirmed"
+                or verified.get("zip_sha256") != sha256):
+            fail("Zatwierdzenie stabilnego wydania nie pasuje do wersji i SHA256 ZIP.")
+        prerelease = False
+    release_title = f"Tekken Accessibility {tag}" + (" (TEST)" if prerelease else "")
     print(f"Kontrola ZIP PASS: {rel} ({package.stat().st_size} B)")
     print(f"Tag: {tag} | SHA256: {sha256}")
     outputs = os.environ.get("GITHUB_OUTPUT")
     if outputs:
         with open(outputs, "a", encoding="utf-8") as file:
-            file.write(f"release_tag={tag}\npackage_path={rel}\nnotes_path={notes_rel}\nsha256={sha256}\n")
+            file.write(f"release_tag={tag}\npackage_path={rel}\nnotes_path={notes_rel}\nsha256={sha256}\nprerelease={str(prerelease).lower()}\nrelease_title={release_title}\n")
 
 
 if __name__ == "__main__":
